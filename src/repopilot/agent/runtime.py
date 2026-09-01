@@ -12,16 +12,18 @@ from repopilot.agent.context import AgentContextBuilder
 from repopilot.agent.finish import FinishGate
 from repopilot.agent.protocol import AgentModel
 from repopilot.agent.state import AgentState, AgentTrace, Observation, TraceStep, new_id
+#AgentState 当前状态，相当于agent短期记忆  Observation 调用工具的返回
+#TraceStep 一次行动记录  AgentTrace 整个运行轨迹，相当于langsmith Trace
 from repopilot.config import Settings
 from repopilot.tools.base import ToolContext
 from repopilot.tools.registry import ToolRegistry
 
-
+#Agent最后返回两个东西，最终状态state和trace
 class AgentRunResult(BaseModel):
     state: AgentState
     trace: AgentTrace
 
-
+#整个Agent的执行引擎，类似LangGraph的Runtime，或者LangChain的AgentExecutor
 class AgentRuntime:
     def __init__(
         self,
@@ -44,14 +46,14 @@ class AgentRuntime:
             commit_sha=state.commit_sha,
             goal=state.goal,
         )
-        definitions = self.registry.definitions()
-        while self._can_continue(state):
+        definitions = self.registry.definitions()#获取工具列表，告诉大模型你有什么能力
+        while self._can_continue(state):#没超运算，没完成，没失败
             state.iteration_count += 1
             step_id = new_id("step")
-            context = self.context_builder.build(state, definitions)
+            context = self.context_builder.build(state, definitions)#构建上下文，给LLM的输入
             try:
-                decision = self.model.decide(context, definitions)
-            except Exception as exc:
+                decision = self.model.decide(context, definitions)#调用LLM决策，可能调用工具或者结束
+            except Exception as exc:#错误处理 不会直接挂，而是记录，下一轮重新尝试，有尝试上限
                 self._sync_model_usage(state)
                 state.consecutive_error_count += 1
                 observation = Observation(
@@ -74,19 +76,19 @@ class AgentRuntime:
             self._sync_model_usage(state)
 
             step = TraceStep(step_id=step_id, rationale=decision.rationale, decision=decision)
-            if isinstance(decision.action, ToolAction):
-                observation = self._execute_tool(decision.action, state, tool_context, step_id)
-                state.observations.append(observation)
+            if isinstance(decision.action, ToolAction):#如果Agent说要调用工具
+                observation = self._execute_tool(decision.action, state, tool_context, step_id)#执行工具
+                state.observations.append(observation)#保存Observation
                 state.consecutive_error_count = (
                     0 if observation.status == "success" else state.consecutive_error_count + 1
-                )
-                self._record_usage(state, observation)
+                )#错误计数，防止死循环
+                self._record_usage(state, observation)#记录资源消耗
                 step.observation_id = observation.id
                 step.observation = observation
                 trace.steps.append(step)
                 continue
 
-            validation = self.finish_gate.validate(decision.action.analysis, state)
+            validation = self.finish_gate.validate(decision.action.analysis, state)#如果不是ToolAction，说明agent想结束
             if validation.accepted:
                 state.final_analysis = validation.analysis
                 state.status = "completed"
