@@ -1,25 +1,93 @@
 # RepoPilot
 
-RepoPilot 是一个面向开发者的 GitHub 仓库分析 Agent。它会克隆公开仓库，在只读工具和资源预算约束下自主选择目录、源码与符号进行探索，最后生成带源码证据的中文 Markdown 报告。
+RepoPilot 是一个面向开发者的 GitHub Repository Analysis Agent。输入公开 GitHub 仓库
+URL，它会在资源预算和只读安全边界内自主探索代码，结合 Python AST 建立增量
+Repository Map，最终生成带精确源码证据的中文 Markdown 分析报告。
 
-当前 Phase 2 的重点是让 Agent 处于决策中心：Scanner 只提供初始事实，`get_tree`、`read_file`、`search_code` 和 `find_symbol` 只返回观察结果；下一步读什么、何时改变路线以及何时完成分析，都由模型根据 Goal 和已有 Observation 决定。
+```bash
+repopilot analyze https://github.com/owner/repository
+```
+
+RepoPilot 的重点不是把整个仓库塞给模型，也不是先由固定算法选出“关键文件”再让 LLM
+总结。模型始终位于探索决策中心：它根据 Goal 和每轮 Observation 决定下一步调用哪个工具、
+读取什么文件、追踪什么符号，以及何时提交最终结论。
+
+## 核心能力
+
+- **Agentic Code Exploration**：Agent 自主组合 Tree、Read、Search、Symbol 和 AST 工具，
+  Runtime 不内置固定关键文件选择算法。
+- **AST + LLM Code Understanding**：Python AST 提供符号、Import、继承、调用和引用等
+  确定性事实，LLM 负责解释架构语义。
+- **Incremental Repository Map**：只记录 Agent 已探索的代码，不在扫描阶段解析整个仓库。
+- **Evidence-grounded Analysis**：关键 Finding 必须关联真实 Observation 和精确 SourceSpan；
+  无效 Evidence 会被 Finish Gate 拒绝。
+- **Bounded Runtime**：限制模型决策、工具调用、Token、上下文、读取量以及 AST 节点和关系数量。
+- **Reproducible Trace**：可导出完整 Agent 决策、Tool Observation、预算消耗和失败原因。
+- **Safe by Default**：不执行目标仓库代码、不安装目标依赖、不向 Agent 暴露 Shell。
+
+## 工作流程
+
+```text
+GitHub URL
+    │
+    ▼
+Repository Loader / Scanner ──► 初始仓库事实
+    │
+    ▼
+Goal ──► Agent ──► Tool Action ──► Observation
+            ▲                           │
+            └────── 下一步决策 ◄────────┘
+                         │
+                         ▼
+                    Finish Gate
+                         │
+                         ▼
+              Evidence Report + Trace
+```
+
+确定性模块只负责安全克隆、扫描、AST 解析、关系解析和事实查询。入口判断、核心模块识别、
+探索路线与架构解释均由 Agent 根据目标和观察动态决定。
+
+## 当前实现状态
+
+RepoPilot 当前已完成前三个工程阶段，足以作为可运行的 Repository Agent Demo：
+
+| 阶段 | 能力 | 状态 |
+|---|---|---|
+| Phase 1 | Clone、目录扫描、技术栈识别、README/配置解析、基础报告 | 已完成 |
+| Phase 2 | Agent Loop、Tool Registry、自主 Read/Search/Symbol 探索、Finding/Evidence | 已完成 |
+| Phase 3 | Python AST、受限 Resolver、增量 Repository Map、AST Evidence Gate | 工程实现完成 |
+| Phase 4 | SQLite、缓存、Trace 优化、FastAPI、Web Demo | 已暂停 |
+
+Phase 3 当前 Definition of Done 为 **30/34**。83 项自动化测试通过，覆盖率 **90.04%**；
+尚未完成三类真实仓库 Smoke Test、人工 Golden Evaluation 和至少一次以 `completed` 结束的
+真实 Provider 验收。因此项目可以演示，但不会把尚未完成的质量验证描述为已完成。
+
+详细记录见 [Phase 3 验收记录](./PHASE3_ACCEPTANCE.md)。
 
 ## 环境要求
 
 - Python 3.11 或更高版本
-- `PATH` 中可以使用 Git
+- `PATH` 中可使用 Git
 - OpenAI-compatible 服务的 API Key、Base URL 和模型名称
 
 ## 安装
 
 ```bash
+git clone https://github.com/cy200682/RepoPilot-GitHub-Repository-Analysis-Agent.git
+cd RepoPilot-GitHub-Repository-Analysis-Agent
 python -m venv .venv
 python -m pip install -e ".[dev]"
 ```
 
-请根据当前 Shell 使用相应命令激活虚拟环境。
+请根据当前 Shell 激活虚拟环境，然后检查运行环境：
 
-## 配置
+```bash
+repopilot --help
+repopilot doctor
+```
+
+## 模型配置
 
 将 `.env.example` 复制为 `.env`，至少填写：
 
@@ -29,30 +97,85 @@ REPOPILOT_LLM_BASE_URL=https://api.openai.com/v1
 REPOPILOT_LLM_MODEL=your-model
 ```
 
-MiniMax 国内 OpenAI-compatible 配置示例：
+MiniMax 国内 OpenAI-compatible API 示例：
 
 ```dotenv
 REPOPILOT_LLM_BASE_URL=https://api.minimaxi.com/v1
 REPOPILOT_LLM_MODEL=MiniMax-M2.7
 ```
 
-MiniMax 响应会自动启用 reasoning split；API Key 仍只写入本地 `.env`。
+MiniMax 响应会自动启用 reasoning split。API Key 只应保存在本地 `.env`；该文件已被
+`.gitignore` 排除，禁止将真实密钥写入 README、Trace 或提交历史。
 
-不要把 `.env` 或 API Key 提交到版本控制。检查本地 Git 和模型配置：
+## 快速体验
+
+分析一个公开 Python 仓库：
 
 ```bash
-repopilot doctor
+repopilot analyze https://github.com/pallets/itsdangerous
 ```
 
-Agent 的迭代次数、工具调用、文件读取量、搜索结果量和上下文长度都可通过 `.env.example` 中的对应变量调整。
+指定目标并导出报告与 Trace：
+
+```bash
+repopilot analyze https://github.com/pallets/itsdangerous \
+  --goal "定位公开 API、核心签名与验签流程，并给出精确源码证据" \
+  --max-iterations 10 \
+  --max-total-tokens 70000 \
+  --output reports/itsdangerous.md \
+  --trace-output reports/itsdangerous-trace.json
+```
+
+PowerShell 可以将续行符 `\` 换成反引号，或者把命令写成一行。
+
+其他常用方式：
+
+```bash
+# 保留克隆仓库，便于手工核对源码
+repopilot analyze https://github.com/owner/repository --keep-repo
+
+# 使用 Phase 1 的一次性 Bootstrap 分析作为回归基线
+repopilot analyze https://github.com/owner/repository --mode bootstrap
+```
+
+## Agent 工具
+
+当前 Tool Registry 只包含七个只读工具：
+
+| 工具 | 用途 |
+|---|---|
+| `get_tree` | 按范围查看仓库目录结构 |
+| `read_file` | 读取带行号的有限源码片段 |
+| `search_code` | 搜索文本、文件名和代码模式 |
+| `find_symbol` | AST 精确查找，并保留文本候选降级 |
+| `find_references` | 查询 resolved、candidate、ambiguous 或 unresolved 引用 |
+| `inspect_python` | 按 Agent 指定文件提取 Python AST 结构事实 |
+| `get_relationships` | 查询当前已探索 Repository Map 的局部关系 |
+
+AST Tool 不会自动扩展成全仓库分析；解析哪些文件仍由 Agent 决定。
+
+## 报告内容
+
+报告覆盖：
+
+- 项目简介与技术栈
+- 项目目录与程序入口
+- 核心模块和关键类/函数
+- 核心执行流程与模块依赖
+- 重要设计和潜在工程问题
+- 推荐源码阅读顺序
+- Agent 状态、探索统计、Token Usage 和 Evidence
+
+程序入口、核心模块、执行流程和模块关系使用结构化 Finding。每条关键 Finding 都必须引用
+已验证 Evidence；静态 Call Site 只能支持推断的执行流程，不能被夸大为运行时必然调用。
 
 ## 成本控制
 
-默认配置采用有界的经济模式：最多 12 次模型决策、10 次 Tool 调用、4 万字符上下文、
-8 万累计 Token，单个 AST Tool 最多返回 60 条结构事实。达到任一预算后，Agent 停止继续
-调用模型并输出明确标记的部分报告。
+默认配置采用有界模式：最多 12 次模型决策、10 次 Tool 调用、4 万字符 Agent Context、
+8 万累计 Token，单个 AST Tool 最多返回 60 条结构事实。达到预算后停止继续调用模型，并
+生成明确标记为部分完成的报告。
 
-可在单次命令中进一步限制累计 Token：
+可以在单次运行中进一步收紧预算：
 
 ```bash
 repopilot analyze https://github.com/owner/repository \
@@ -60,87 +183,49 @@ repopilot analyze https://github.com/owner/repository \
   --max-total-tokens 40000
 ```
 
-也可以通过环境变量长期配置：
-
-```dotenv
-REPOPILOT_AGENT_MAX_TOTAL_TOKENS=80000
-REPOPILOT_AGENT_CONTEXT_CHAR_BUDGET=40000
-REPOPILOT_LLM_MAX_OUTPUT_TOKENS=6000
-REPOPILOT_AST_MAX_TOOL_RESULTS=60
-```
-
-Provider 返回 Token Usage 时，Trace 和报告记录真实的 Prompt、Completion 与 Total Token；
-不返回 Usage 时使用字符数进行保守估算并标记为 `estimated`。金额取决于模型平台价格，
-RepoPilot 使用 Provider 无关的 Token 上限作为硬断路器。
-
-## 使用方式
-
-默认使用 Agent 模式：
-
-```bash
-repopilot analyze https://github.com/owner/repository
-```
-
-指定分析目标、报告和可复现 Trace：
-
-```bash
-repopilot analyze https://github.com/owner/repository \
-  --goal "找出一次 CLI 请求经过的主要模块，并给出源码证据" \
-  --max-iterations 12 \
-  --max-total-tokens 80000 \
-  --output reports/project.md \
-  --trace-output reports/project-trace.json
-```
-
-在 PowerShell 中可将续行符 `\` 换成反引号，或直接写成一行。
-
-保留克隆仓库以便本地检查：
-
-```bash
-repopilot analyze https://github.com/owner/repository --keep-repo
-```
-
-使用 Phase 1 的一次性 Bootstrap 分析作为回归基线：
-
-```bash
-repopilot analyze https://github.com/owner/repository --mode bootstrap
-```
-
-## Agent 如何工作
-
-```text
-Goal
-  -> AgentDecision
-  -> 一个只读 Tool Action
-  -> Observation
-  -> Agent 根据新证据决定下一步
-  -> Finish Gate 校验证据
-  -> Report + Trace
-```
-
-Runtime 只负责执行、校验、记录和限额，不包含“固定选出关键文件”的算法。程序入口、核心模块、执行流程和模块关系使用结构化 Finding，每条 Finding 都必须声明置信度并引用已验证 Evidence；证据缺失或引用无效的 Finish 会被拒绝。预算耗尽时则输出明确标记的部分报告。
+Provider 返回 Usage 时，报告和 Trace 记录真实 Prompt、Completion 与 Total Token；否则
+使用字符数保守估算并标记为 `estimated`。金额由模型平台定价决定，RepoPilot 使用与
+Provider 无关的 Token 上限作为断路器。
 
 ## 安全边界
 
 - 只接受公开的 `https://github.com/owner/repository` URL。
-- 不执行目标仓库代码，不安装其依赖，也不初始化 Git Submodule。
-- Agent Registry 仅提供七个只读代码与 AST 查询工具，没有 Shell、网络或密钥读取工具。
-- README、注释和源码均作为不可信数据，不作为系统指令执行。
+- 不执行目标仓库代码，不安装其依赖，不初始化 Git Submodule。
+- Agent 没有 Shell、网络或密钥读取工具。
+- README、注释和源码均被视为不可信数据，而不是系统指令。
 - 拒绝绝对路径、路径穿越、符号链接和仓库外文件访问。
 - 跳过常见构建、虚拟环境、缓存和依赖目录。
-- 限制仓库大小、文件数、目录深度、单次读取、累计读取、搜索结果、上下文和迭代次数。
-- Trace 与错误信息会进行密钥脱敏。
+- 限制仓库大小、文件数、目录深度、读取量、搜索结果、上下文和迭代次数。
+- Trace 与错误信息进行密钥脱敏；`.env` 和生成的 `reports/` 默认不提交。
 
-## 开发与测试
+## 开发与验证
 
 ```bash
-pytest
-ruff check .
-mypy src/repopilot
+python -m ruff check src tests
+python -m mypy src
+python -m pytest --cov=repopilot --cov-report=term --cov-fail-under=85
 ```
 
-项目总体方案见 [PROJECT_PLAN.md](./PROJECT_PLAN.md)，Phase 1 方案见 [PHASE1_IMPLEMENTATION_PLAN.md](./PHASE1_IMPLEMENTATION_PLAN.md)，Phase 2 方案见 [PHASE2_IMPLEMENTATION_PLAN.md](./PHASE2_IMPLEMENTATION_PLAN.md)，Phase 3 方案见 [PHASE3_IMPLEMENTATION_PLAN.md](./PHASE3_IMPLEMENTATION_PLAN.md)。
+当前基线：
+
+```text
+83 passed
+90.04% coverage
+ruff passed
+mypy passed
+clean editable install passed
+```
+
+## 项目文档
+
+- [项目总体方案](./PROJECT_PLAN.md)
+- [Phase 1 执行方案](./PHASE1_IMPLEMENTATION_PLAN.md)
+- [Phase 2 执行方案](./PHASE2_IMPLEMENTATION_PLAN.md)
+- [Phase 3 执行方案](./PHASE3_IMPLEMENTATION_PLAN.md)
+- [Phase 3 验收记录](./PHASE3_ACCEPTANCE.md)
 
 ## 当前边界
 
-Phase 2 使用文本搜索和启发式符号候选，不会把候选结果伪装成精确 AST 结论。Python AST、调用关系、Repository Map 属于 Phase 3；长期会话、SQLite、FastAPI、Web 页面和多轮 Repository Q&A 产品形态仍未实现。
+当前版本专注公开 Python 仓库的单次分析。持续多轮 Repository Q&A、SQLite 持久化、语义
+向量检索、FastAPI/Web 页面、多语言 AST、代码修改和 PR 自动化暂未实现，这些能力留待后续
+按实际需求演进。
