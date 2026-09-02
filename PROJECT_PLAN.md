@@ -452,12 +452,11 @@ Agent 每轮输出应遵循结构化协议，例如：
 | 分类 | 技术 |
 | --- | --- |
 | 语言 | Python |
-| API | FastAPI |
 | 数据模型 | Pydantic |
 | Git | GitPython |
 | 静态分析 | Python AST |
 | LLM | OpenAI-compatible API |
-| 存储 | SQLite |
+| 长期记忆 | SQLite + FTS5 |
 | CLI | Typer + Rich |
 
 第一版不引入 LangChain 或 LangGraph，Agent Loop 自行实现，以保持运行机制清晰、依赖较少且易于调试。
@@ -656,27 +655,26 @@ LLM 分析
 - 主要架构结论可追溯到文件和行号。
 - 静态分析无法确认的动态行为会标记为推断。
 
-### Phase 4 — Engineering
+### Phase 4 — Agent Memory
 
-目标：完善稳定性、可观察性和产品交互。
+目标：增加跨进程 Repository Memory、上下文管理和多轮证据化问答。
 
 交付内容：
 
-- Context Manager。
-- Token 统计和成本记录。
-- 错误重试、超时和取消。
-- Trace 与日志。
-- SQLite 缓存和会话存储。
-- FastAPI。
-- Web Demo。
-- Repository Q&A。
+- SQLite + FTS5 结构化 Repository Memory。
+- Repository / Commit 隔离和失效机制。
+- `recall_memory`、`search_memory`、`save_memory`。
+- Conversation Summary 与 Context Budget。
+- CLI 多轮 Repository Q&A。
+- Memory 使用 Trace 和复用收益评测。
 
 验收标准：
 
-- 分析任务可查询状态并安全恢复常见失败。
-- 相同仓库和 Commit 可复用扫描结果。
-- Web 页面可提交任务、查看报告并继续提问。
-- 大型仓库不会因无限读取而耗尽上下文。
+- Agent 自主决定查询 Memory 或继续探索源码。
+- 相同仓库和 Commit 可复用已验证 Finding 与 Evidence。
+- 新 Commit 不会错误复用旧 SourceSpan。
+- 多轮问答不会因无限历史消息耗尽上下文。
+- 关键回答保持 100% Evidence 覆盖。
 
 ---
 
@@ -685,7 +683,7 @@ LLM 分析
 为避免范围失控，第一版不实现：
 
 - 复杂 Knowledge Graph。
-- 长期 Memory。
+- 与 Repository Analysis 无关的通用人格 Memory。
 - 五六个 Sub-Agent。
 - 自动修改代码。
 - 自动提交 PR。

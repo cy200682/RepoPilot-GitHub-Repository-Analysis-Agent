@@ -40,6 +40,23 @@ def test_default_registry_exposes_phase3_read_only_analysis_tools(
         "inspect_python",
         "find_references",
         "get_relationships",
+        "recall_memory",
+        "search_memory",
+        "save_memory",
+    ]
+
+
+def test_memory_disabled_registry_preserves_phase3_tool_surface() -> None:
+    registry = build_default_registry(Settings(memory_enabled=False))
+
+    assert [item.name for item in registry.definitions()] == [
+        "get_tree",
+        "read_file",
+        "search_code",
+        "find_symbol",
+        "inspect_python",
+        "find_references",
+        "get_relationships",
     ]
 
 

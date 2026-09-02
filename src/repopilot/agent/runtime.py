@@ -12,19 +12,21 @@ from repopilot.agent.context import AgentContextBuilder
 from repopilot.agent.finish import FinishGate
 from repopilot.agent.protocol import AgentModel
 from repopilot.agent.state import AgentState, AgentTrace, Observation, TraceStep, new_id
-#AgentState 当前状态，相当于agent短期记忆  Observation 调用工具的返回
-#TraceStep 一次行动记录  AgentTrace 整个运行轨迹，相当于langsmith Trace
 from repopilot.config import Settings
 from repopilot.tools.base import ToolContext
 from repopilot.tools.registry import ToolRegistry
 
-#Agent最后返回两个东西，最终状态state和trace
+
 class AgentRunResult(BaseModel):
+    """Agent 最终返回的状态和完整运行轨迹。"""
+
     state: AgentState
     trace: AgentTrace
 
-#整个Agent的执行引擎，类似LangGraph的Runtime，或者LangChain的AgentExecutor
+
 class AgentRuntime:
+    """Agent 执行引擎，负责决策循环、工具执行、预算和 Trace。"""
+
     def __init__(
         self,
         settings: Settings,
@@ -46,14 +48,17 @@ class AgentRuntime:
             commit_sha=state.commit_sha,
             goal=state.goal,
         )
-        definitions = self.registry.definitions()#获取工具列表，告诉大模型你有什么能力
-        while self._can_continue(state):#没超运算，没完成，没失败
+        # 工具定义会随每轮 Context 提供给模型。
+        definitions = self.registry.definitions()
+        while self._can_continue(state):
             state.iteration_count += 1
             step_id = new_id("step")
-            context = self.context_builder.build(state, definitions)#构建上下文，给LLM的输入
+            context = self.context_builder.build(state, definitions)
             try:
-                decision = self.model.decide(context, definitions)#调用LLM决策，可能调用工具或者结束
-            except Exception as exc:#错误处理 不会直接挂，而是记录，下一轮重新尝试，有尝试上限
+                # 模型在调用工具和提交最终答案之间自主决策。
+                decision = self.model.decide(context, definitions)
+            except Exception as exc:
+                # 决策错误写入 Observation，并受连续错误预算约束。
                 self._sync_model_usage(state)
                 state.consecutive_error_count += 1
                 observation = Observation(
@@ -76,21 +81,27 @@ class AgentRuntime:
             self._sync_model_usage(state)
 
             step = TraceStep(step_id=step_id, rationale=decision.rationale, decision=decision)
-            if isinstance(decision.action, ToolAction):#如果Agent说要调用工具
-                observation = self._execute_tool(decision.action, state, tool_context, step_id)#执行工具
-                state.observations.append(observation)#保存Observation
+            if isinstance(decision.action, ToolAction):
+                observation = self._execute_tool(decision.action, state, tool_context, step_id)
+                state.observations.append(observation)
                 state.consecutive_error_count = (
                     0 if observation.status == "success" else state.consecutive_error_count + 1
-                )#错误计数，防止死循环
-                self._record_usage(state, observation)#记录资源消耗
+                )
+                self._record_usage(state, observation)
                 step.observation_id = observation.id
                 step.observation = observation
                 trace.steps.append(step)
                 continue
 
-            validation = self.finish_gate.validate(decision.action.analysis, state)#如果不是ToolAction，说明agent想结束
+            # 非 ToolAction 表示 Agent 请求结束，但仍必须通过 Evidence Gate。
+            validation = self.finish_gate.validate(decision.action.analysis, state)
             if validation.accepted:
                 state.final_analysis = validation.analysis
+                state.memory_entries_cited += self._record_cited_memories(
+                    validation.analysis,
+                    state,
+                    tool_context,
+                )
                 state.status = "completed"
                 trace.steps.append(step)
                 break
@@ -120,6 +131,11 @@ class AgentRuntime:
         trace.completion_tokens = state.completion_tokens
         trace.total_tokens = state.total_tokens
         trace.token_usage_estimated = state.token_usage_estimated
+        trace.memory_entries_recalled = state.memory_results_seen
+        trace.memory_entries_cited = state.memory_entries_cited
+        trace.memory_entries_rejected = state.stale_memories_rejected
+        trace.memory_entries_refreshed = state.memory_entries_refreshed
+        trace.memory_entries_saved = state.memory_entries_saved
         return AgentRunResult(state=state, trace=trace)
 
     def _can_continue(self, state: AgentState) -> bool:
@@ -146,6 +162,18 @@ class AgentRuntime:
         context: ToolContext,
         step_id: str,
     ) -> Observation:
+        if (
+            action.tool_name in {"recall_memory", "search_memory", "save_memory"}
+            and state.memory_call_count >= self.settings.memory_max_calls_per_run
+        ):
+            return Observation(
+                step_id=step_id,
+                tool_name=action.tool_name,
+                status="error",
+                summary=(
+                    "Memory tool-call budget exhausted; use existing observations or code tools."
+                ),
+            )
         canonical_arguments = self._canonical_arguments(action.arguments)
         fingerprint = f"{action.tool_name}:{json.dumps(canonical_arguments, sort_keys=True)}"
         count = state.action_counts.get(fingerprint, 0) + 1
@@ -158,6 +186,7 @@ class AgentRuntime:
                 summary="Repeated action rejected; change the tool or arguments.",
             )
         state.tool_call_count += 1
+        context.agent_state = state
         context.ast_file_budget_remaining = max(
             self.settings.ast_max_files_per_run - len(state.ast_parsed_files), 0
         )
@@ -191,6 +220,8 @@ class AgentRuntime:
 
     @staticmethod
     def _record_usage(state: AgentState, observation: Observation) -> None:
+        if observation.tool_name in {"recall_memory", "search_memory", "save_memory"}:
+            state.memory_call_count += 1
         if observation.status != "success":
             return
         if observation.tool_name == "read_file" and observation.data.get("path"):
@@ -217,6 +248,72 @@ class AgentRuntime:
             state.reference_query_count += 1
         if observation.tool_name == "get_relationships":
             state.relationship_query_count += 1
+        if observation.tool_name in {"recall_memory", "search_memory"}:
+            state.memory_results_seen += int(observation.data.get("total_matches", 0))
+            memories = observation.data.get("memories", [])
+            if isinstance(memories, list):
+                state.stale_memories_rejected += sum(
+                    1
+                    for item in memories
+                    if isinstance(item, dict) and item.get("status") in {"stale", "invalid"}
+                )
+                if observation.data.get("content_hash_verified") is True:
+                    state.memory_entries_refreshed += sum(
+                        1
+                        for item in memories
+                        if isinstance(item, dict) and item.get("status") == "reusable"
+                    )
+        if (
+            observation.tool_name == "save_memory"
+            and observation.status == "success"
+            and observation.data.get("deduplicated") is not True
+        ):
+            state.memory_entries_saved += 1
+
+    @staticmethod
+    def _record_cited_memories(
+        analysis: AgentAnalysisResult,
+        state: AgentState,
+        context: ToolContext,
+    ) -> int:
+        if context.memory_store is None:
+            return 0
+        observations = {item.id: item for item in state.observations}
+        recorded: set[tuple[str, str]] = set()
+        for evidence in analysis.evidence:
+            if evidence.source_kind != "memory" or not evidence.verified:
+                continue
+            observation = observations.get(evidence.observation_id)
+            if observation is None:
+                continue
+            memories = observation.data.get("memories", [])
+            if not isinstance(memories, list):
+                continue
+            for memory in memories:
+                if not isinstance(memory, dict) or not isinstance(memory.get("memory_id"), str):
+                    continue
+                nested = memory.get("evidence", [])
+                if not isinstance(nested, list) or not any(
+                    isinstance(item, dict)
+                    and item.get("path") == evidence.path
+                    and isinstance(item.get("start_line"), int)
+                    and isinstance(item.get("end_line"), int)
+                    and int(item["start_line"]) <= evidence.start_line
+                    and int(item["end_line"]) >= evidence.end_line
+                    for item in nested
+                ):
+                    continue
+                key = (str(memory["memory_id"]), observation.id)
+                if key in recorded:
+                    continue
+                recorded.add(key)
+                context.memory_store.record_memory_usage(
+                    state.run_id,
+                    key[0],
+                    observation.id,
+                    "cited",
+                )
+        return len(recorded)
 
     def _partial_analysis(self, state: AgentState) -> AgentAnalysisResult:
         reached: list[str] = []

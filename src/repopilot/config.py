@@ -57,3 +57,14 @@ class Settings(BaseSettings):
     repository_map_max_edges: int = Field(default=50_000, gt=0, le=2_000_000)
     reference_max_candidate_files: int = Field(default=15, gt=0, le=500)
     ast_docstring_max_chars: int = Field(default=500, ge=0, le=10_000)
+
+    memory_enabled: bool = True
+    memory_database: Path = Path(".repopilot/memory.db")
+    memory_fts_enabled: bool = True
+    memory_max_results: int = Field(default=10, gt=0, le=100)
+    memory_max_result_chars: int = Field(default=12_000, gt=500, le=100_000)
+    memory_max_calls_per_run: int = Field(default=6, ge=0, le=50)
+    memory_max_saves_per_run: int = Field(default=20, ge=0, le=100)
+    conversation_recent_messages: int = Field(default=6, gt=0, le=50)
+    conversation_summary_trigger_chars: int = Field(default=20_000, gt=1_000)
+    conversation_summary_max_chars: int = Field(default=8_000, gt=500, le=50_000)

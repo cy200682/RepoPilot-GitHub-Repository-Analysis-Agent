@@ -181,6 +181,7 @@ def runtime_fixture(
     model: object,
     **setting_overrides: object,
 ) -> tuple[AgentRuntime, AgentState, ToolContext]:
+    setting_overrides.setdefault("memory_enabled", False)
     settings = Settings(**setting_overrides)
     reader = RepositoryReader(settings)
     snapshot = RepositoryScanner(settings, reader).scan(

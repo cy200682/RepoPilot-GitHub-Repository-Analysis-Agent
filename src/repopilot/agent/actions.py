@@ -22,6 +22,7 @@ class AgentEvidence(BaseModel):
         "ast_call",
         "ast_reference",
         "map_query",
+        "memory",
     ] = "read"
     resolution: Literal[
         "resolved",

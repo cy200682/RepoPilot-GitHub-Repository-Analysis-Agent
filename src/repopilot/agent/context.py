@@ -68,11 +68,22 @@ class AgentContextBuilder:
             f"# Visited files\n{self._json(sorted(state.visited_files))}",
             f"# Search history\n{self._json(state.searched_queries[-20:])}",
             (
+                "# Repository memory catalog\n"
+                f"{self._json(state.memory_catalog) if state.memory_catalog else '(none)'}\n"
+                "This catalog only announces available historical memory. Use a memory tool "
+                "to inspect it; do not assume it is current or sufficient."
+            ),
+            (f"# Conversation summary\n{state.conversation_summary or '(none)'}"),
+            (f"# Recent conversation messages\n{self._json(self._recent_messages(state))}"),
+            (
                 "# Code index coverage\n"
                 f"parsed files: {len(state.ast_parsed_files)}\n"
                 f"parse errors: {state.ast_parse_errors}\n"
                 f"map nodes: {state.repository_map_node_count}\n"
                 f"map edges: {state.repository_map_edge_count}"
+                f"\nmemory calls: {state.memory_call_count}/"
+                f"{self.settings.memory_max_calls_per_run}"
+                f"\nmemory candidates seen: {state.memory_results_seen}"
             ),
             f"# Older observation summaries\n{self._older_summaries(older)}",
         ]
@@ -92,6 +103,9 @@ class AgentContextBuilder:
     @staticmethod
     def _json(value: object) -> str:
         return json.dumps(value, ensure_ascii=False, indent=2)
+
+    def _recent_messages(self, state: AgentState) -> list[str]:
+        return state.recent_messages[-self.settings.conversation_recent_messages :]
 
     @classmethod
     def _bootstrap(cls, state: AgentState) -> str:

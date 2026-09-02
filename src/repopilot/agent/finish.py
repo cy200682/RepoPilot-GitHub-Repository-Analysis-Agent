@@ -23,6 +23,7 @@ class FinishGate:
         "ast_call": {"inspect_python", "get_relationships"},
         "ast_reference": {"inspect_python", "find_references", "get_relationships"},
         "map_query": {"get_relationships"},
+        "memory": {"recall_memory", "search_memory"},
     }
     _AST_RECORD_KEYS = {
         "ast_symbol": ("symbols", "candidates"),
@@ -162,6 +163,8 @@ class FinishGate:
         evidence: AgentEvidence,
         observation: Observation,
     ) -> bool:
+        if evidence.source_kind == "memory":
+            return cls._memory_evidence_matches(evidence, observation)
         keys = cls._AST_RECORD_KEYS.get(evidence.source_kind)
         if not keys:
             return True
@@ -192,6 +195,38 @@ class FinishGate:
                 if isinstance(resolution, str):
                     observed.add(resolution)
         return evidence.resolution in observed
+
+    @staticmethod
+    def _memory_evidence_matches(
+        evidence: AgentEvidence,
+        observation: Observation,
+    ) -> bool:
+        memories = observation.data.get("memories", [])
+        if not isinstance(memories, list):
+            return False
+        for memory in memories:
+            if not isinstance(memory, dict):
+                continue
+            status = memory.get("status")
+            hash_verified = observation.data.get("content_hash_verified") is True
+            if status != "current" and not (status == "reusable" and hash_verified):
+                continue
+            records = memory.get("evidence", [])
+            if not isinstance(records, list):
+                continue
+            for record in records:
+                if not isinstance(record, dict) or record.get("verified") is not True:
+                    continue
+                if (
+                    record.get("path") == evidence.path
+                    and record.get("resolution") == evidence.resolution
+                    and isinstance(record.get("start_line"), int)
+                    and isinstance(record.get("end_line"), int)
+                    and int(record["start_line"]) <= evidence.start_line
+                    and int(record["end_line"]) >= evidence.end_line
+                ):
+                    return True
+        return False
 
     @staticmethod
     def _record_contains_evidence(record: dict[object, object], evidence: AgentEvidence) -> bool:

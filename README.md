@@ -57,13 +57,17 @@ RepoPilot 当前已完成前三个工程阶段，足以作为可运行的 Reposi
 | Phase 1 | Clone、目录扫描、技术栈识别、README/配置解析、基础报告 | 已完成 |
 | Phase 2 | Agent Loop、Tool Registry、自主 Read/Search/Symbol 探索、Finding/Evidence | 已完成 |
 | Phase 3 | Python AST、受限 Resolver、增量 Repository Map、AST Evidence Gate | 工程实现完成 |
-| Phase 4 | SQLite、缓存、Trace 优化、FastAPI、Web Demo | 已暂停 |
+| Phase 4 | SQLite/FTS5 Repository Memory、Context、CLI 多轮问答 | 工程实现完成，自动化验收通过 |
 
 Phase 3 当前 Definition of Done 为 **30/34**。83 项自动化测试通过，覆盖率 **90.04%**；
 尚未完成三类真实仓库 Smoke Test、人工 Golden Evaluation 和至少一次以 `completed` 结束的
 真实 Provider 验收。因此项目可以演示，但不会把尚未完成的质量验证描述为已完成。
 
 详细记录见 [Phase 3 验收记录](./PHASE3_ACCEPTANCE.md)。
+
+Phase 4 当前 Definition of Done 为 **40/44**。未完成项是量化检索指标、重复问题成本下降对照、
+三类真实仓库 Smoke Test 和真实 Provider 多轮会话。为控制模型费用，本轮只运行 Fake Agent
+端到端验收，没有发起付费模型请求。详见 [Phase 4 验收记录](./PHASE4_ACCEPTANCE.md)。
 
 ## 环境要求
 
@@ -140,7 +144,7 @@ repopilot analyze https://github.com/owner/repository --mode bootstrap
 
 ## Agent 工具
 
-当前 Tool Registry 只包含七个只读工具：
+当前 Tool Registry 包含七个只读代码工具和三个持久化 Memory Tool：
 
 | 工具 | 用途 |
 |---|---|
@@ -151,8 +155,44 @@ repopilot analyze https://github.com/owner/repository --mode bootstrap
 | `find_references` | 查询 resolved、candidate、ambiguous 或 unresolved 引用 |
 | `inspect_python` | 按 Agent 指定文件提取 Python AST 结构事实 |
 | `get_relationships` | 查询当前已探索 Repository Map 的局部关系 |
+| `recall_memory` | 按类型、Symbol 和 Path 召回当前 Commit 的结构化记忆 |
+| `search_memory` | 使用 SQLite FTS5 和字段匹配搜索候选记忆 |
+| `save_memory` | 保存携带有效 Evidence 的 Agent 记忆候选 |
 
 AST Tool 不会自动扩展成全仓库分析；解析哪些文件仍由 Agent 决定。
+
+## Repository Memory 与多轮问答
+
+Phase 4 使用本地 SQLite 保存 Repository、Commit、Analysis Run、Finding、Evidence、探索摘要
+和 Conversation。FTS5 只负责检索候选；Memory 是否足够、是否需要重新验证或继续读取源码，
+仍由 Agent 决定。不同 Commit 的 Evidence 默认隔离。
+
+```bash
+# 单次证据化提问
+repopilot ask https://github.com/owner/repository "项目入口在哪里？"
+
+# 交互式多轮问答
+repopilot chat https://github.com/owner/repository
+
+# 查看长期记忆
+repopilot memory stats
+repopilot memory list
+repopilot memory show MEMORY_ID
+
+# 安全导出或合并导入 JSON
+repopilot memory export --output repopilot-memory.json
+repopilot memory import repopilot-memory.json
+```
+
+默认数据库位于 `.repopilot/memory.db`，已被 Git 忽略。可以通过 `.env` 修改：
+
+```dotenv
+REPOPILOT_MEMORY_ENABLED=true
+REPOPILOT_MEMORY_DATABASE=.repopilot/memory.db
+REPOPILOT_MEMORY_FTS_ENABLED=true
+REPOPILOT_MEMORY_MAX_RESULTS=10
+REPOPILOT_MEMORY_MAX_CALLS_PER_RUN=6
+```
 
 ## 报告内容
 
@@ -191,7 +231,7 @@ Provider 无关的 Token 上限作为断路器。
 
 - 只接受公开的 `https://github.com/owner/repository` URL。
 - 不执行目标仓库代码，不安装其依赖，不初始化 Git Submodule。
-- Agent 没有 Shell、网络或密钥读取工具。
+- Agent 没有 Shell、任意网络或密钥读取工具；Memory Tool 只能访问当前仓库范围。
 - README、注释和源码均被视为不可信数据，而不是系统指令。
 - 拒绝绝对路径、路径穿越、符号链接和仓库外文件访问。
 - 跳过常见构建、虚拟环境、缓存和依赖目录。
@@ -209,8 +249,8 @@ python -m pytest --cov=repopilot --cov-report=term --cov-fail-under=85
 当前基线：
 
 ```text
-83 passed
-90.04% coverage
+103 passed
+88.36% coverage
 ruff passed
 mypy passed
 clean editable install passed
@@ -223,9 +263,11 @@ clean editable install passed
 - [Phase 2 执行方案](./PHASE2_IMPLEMENTATION_PLAN.md)
 - [Phase 3 执行方案](./PHASE3_IMPLEMENTATION_PLAN.md)
 - [Phase 3 验收记录](./PHASE3_ACCEPTANCE.md)
+- [Phase 4 执行方案](./PHASE4_IMPLEMENTATION_PLAN.md)
+- [Phase 4 验收记录](./PHASE4_ACCEPTANCE.md)
 
 ## 当前边界
 
-当前版本专注公开 Python 仓库的单次分析。持续多轮 Repository Q&A、SQLite 持久化、语义
-向量检索、FastAPI/Web 页面、多语言 AST、代码修改和 PR 自动化暂未实现，这些能力留待后续
-按实际需求演进。
+当前版本支持公开 Python 仓库的单次分析和 SQLite/FTS5 长期 Repository Memory、CLI 多轮
+问答。Embedding、向量数据库、FastAPI/Web、多语言 AST、代码修改和 PR 自动化不在当前
+计划中；Phase 4 的真实多轮 Provider 与三类仓库评测仍待完成。

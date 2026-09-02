@@ -56,6 +56,11 @@ class AgentTrace(BaseModel):
     completion_tokens: int = Field(default=0, ge=0)
     total_tokens: int = Field(default=0, ge=0)
     token_usage_estimated: bool = False
+    memory_entries_recalled: int = Field(default=0, ge=0)
+    memory_entries_cited: int = Field(default=0, ge=0)
+    memory_entries_rejected: int = Field(default=0, ge=0)
+    memory_entries_refreshed: int = Field(default=0, ge=0)
+    memory_entries_saved: int = Field(default=0, ge=0)
     steps: list[TraceStep] = Field(default_factory=list)
 
 
@@ -81,6 +86,16 @@ class AgentState(BaseModel):
     ast_parse_errors: int = 0
     reference_query_count: int = 0
     relationship_query_count: int = 0
+    memory_catalog: dict[str, Any] = Field(default_factory=dict)
+    memory_call_count: int = 0
+    memory_results_seen: int = 0
+    memory_entries_cited: int = 0
+    memory_entries_saved: int = 0
+    memory_entries_refreshed: int = 0
+    stale_memories_rejected: int = 0
+    conversation_id: str | None = None
+    conversation_summary: str = ""
+    recent_messages: list[str] = Field(default_factory=list)
     llm_request_count: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
