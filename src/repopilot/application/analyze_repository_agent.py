@@ -344,7 +344,7 @@ class AnalyzeRepositoryAgentService:
                 confirmed_summary=(analysis.project_summary if analysis else ""),
                 unresolved_questions=(analysis.limitations if analysis else []),
                 coverage_notes=snapshot.truncation_notes,
-                stop_reason=run.state.status,
+                stop_reason=run.state.stop_reason or run.state.status,
             )
         )
 

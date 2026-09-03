@@ -8,8 +8,8 @@ Phase 4 的 Agent Memory 工程实现已完成，Definition of Done 当前为 **
 Tool、Conversation Context、证据化 `ask/chat` 和 Memory 管理 CLI。Memory 仍是 Agent 可选用的
 Observation 来源，不会替代 Agent 决策，也不会自动把历史内容注入 Context。
 
-本轮没有调用真实付费模型。自动化验收使用 Fake Agent，能够验证完整的 Action → Tool →
-Observation → 下一步决策 → Finish Gate 路径，同时避免产生额外模型费用。
+初始自动化验收使用 Fake Agent，验证完整的 Action → Tool → Observation → 下一步决策 →
+Finish Gate 路径。后续 Phase 4.1 又完成一次真实 MiniMax 单仓 `completed` 回归，结果见第 4 节。
 
 ## 2. 已实现能力
 
@@ -43,8 +43,8 @@ python -m pytest --cov=repopilot --cov-report=term --cov-fail-under=85
 ```text
 Ruff passed
 Mypy passed: 66 source files
-Pytest: 103 passed
-Coverage: 88.36%（要求 >= 85%）
+Pytest: 113 passed
+Coverage: 88.81%（要求 >= 85%）
 ```
 
 另外在全新临时虚拟环境中完成 `pip install -e ".[dev]"`，并验证：
@@ -57,7 +57,7 @@ SQLite FTS5                  enabled
 
 临时虚拟环境和临时 Memory 数据库已在验收后删除。
 
-## 4. Agent 中心性验收
+## 4. Agent 中心性与真实 Provider 验收
 
 Fake Agent 端到端覆盖了两条不同轨迹：
 
@@ -68,6 +68,24 @@ Goal → Agent → search_memory(0 results) → Agent → read_file → Observat
 
 这证明 Runtime 没有固化为“先查 Memory，再由 LLM 总结”的流水线。Memory 只提供候选事实；
 查询时机、Memory 是否足够以及是否继续读取源码，都由 Agent 根据 Goal 和 Observation 决定。
+
+Phase 4.1 使用 MiniMax-M2.7 对 `cy200682/-Transformer-Encoder` 的公开仓库 Commit
+`06e79292712889d9e2df6796a18d810460a74fc4` 完成真实回归：
+
+```text
+Agent status: completed
+Stop reason: completed
+Agent iterations: 19
+Tool calls: 17
+Model requests: 25（包含结构化输出纠错请求）
+Total tokens: 199206
+Evidence: 11 条 verified
+Memory entries saved: 16
+```
+
+第 18 轮首次 Finish 被 Evidence Gate 拒绝，第 19 轮由 Agent 根据 Gate Observation 修正后完成。
+报告位于 `reports/transformer-encoder-final.md`，Trace 位于
+`reports/transformer-encoder-final-trace.json`；二者属于本地验收产物，不提交 Git。
 
 ## 5. 安全与一致性验收
 
@@ -90,4 +108,5 @@ Demo；如果需要宣称真实场景的召回收益和成本下降，仍需完�
 
 ## 7. 费用说明
 
-本次整改和验收没有调用 MiniMax、硅基流动或其他远程 LLM API，因此新增模型费用为 0。
+初始自动化验收没有调用远程 LLM。Phase 4.1 后续真实回归调用了 MiniMax；最终成功运行消耗
+199206 Token。费用应以 Provider 账单为准，本项目不根据未知定价自行估算金额。

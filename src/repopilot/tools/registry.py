@@ -1,6 +1,7 @@
 """Schema-validating Tool Registry without decision logic."""
 
 from time import perf_counter
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -20,6 +21,21 @@ class ToolRegistry:
 
     def definitions(self) -> list[ToolDefinition]:
         return [tool_definition(tool) for tool in self._tools.values()]
+
+    def normalize_arguments(
+        self,
+        tool_name: str,
+        arguments: dict[str, object],
+    ) -> dict[str, Any]:
+        """Fill tool defaults before Runtime fingerprints an action."""
+
+        tool = self._tools.get(tool_name)
+        if tool is None:
+            return dict(arguments)
+        try:
+            return tool.input_model.model_validate(arguments).model_dump(mode="json")
+        except ValidationError:
+            return dict(arguments)
 
     def execute(self, action: ToolAction, context: ToolContext, step_id: str) -> Observation:
         started = perf_counter()

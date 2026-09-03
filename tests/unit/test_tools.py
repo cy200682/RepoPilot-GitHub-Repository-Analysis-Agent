@@ -95,6 +95,7 @@ def test_tree_read_search_and_symbol_tools(
     assert read.data["start_line"] == 1
     assert read.evidence_locations[0].path == "src/sample_service/main.py"
     assert search.data["total_matches"] >= 1
+    assert search.data["returned_count"] == len(search.data["matches"])
     assert symbol.data["candidates"][0]["path"] == "src/sample_service/main.py"
     assert symbol.data["candidates"][0]["confidence"] == "candidate"
 

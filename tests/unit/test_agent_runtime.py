@@ -175,6 +175,64 @@ class TokenMeteredModel:
         }
 
 
+class BroadSearchModel:
+    def decide(self, context: str, tools: list[ToolDefinition]) -> AgentDecision:
+        del context, tools
+        return AgentDecision(
+            rationale="Run one deliberately broad but bounded search.",
+            action=ToolAction(
+                tool_name="search_code",
+                arguments={"query": "a", "max_results": 1},
+            ),
+        )
+
+
+class TreeParameterVariantModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def decide(self, context: str, tools: list[ToolDefinition]) -> AgentDecision:
+        del context, tools
+        self.calls += 1
+        arguments: dict[str, object] = {"path": ".", "max_depth": 3}
+        if self.calls > 1:
+            arguments["max_entries"] = 100
+        return AgentDecision(
+            rationale="Request the same navigation scope with a presentation-only variant.",
+            action=ToolAction(tool_name="get_tree", arguments=arguments),
+        )
+
+
+class ReadThenFailModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def decide(self, context: str, tools: list[ToolDefinition]) -> AgentDecision:
+        del context, tools
+        self.calls += 1
+        if self.calls == 1:
+            return AgentDecision(
+                rationale="Read one source file before a simulated provider failure.",
+                action=ToolAction(
+                    tool_name="read_file",
+                    arguments={"path": "src/sample_service/main.py", "end_line": 5},
+                ),
+            )
+        raise RuntimeError("simulated invalid provider response")
+
+
+class IgnoresFinalizationModel:
+    def decide(self, context: str, tools: list[ToolDefinition]) -> AgentDecision:
+        del context, tools
+        return AgentDecision(
+            rationale="Keep reading even when finalization is required.",
+            action=ToolAction(
+                tool_name="read_file",
+                arguments={"path": "src/sample_service/main.py", "end_line": 5},
+            ),
+        )
+
+
 def runtime_fixture(
     fixture_repository: Path,
     repository_source: RepositorySource,
@@ -233,16 +291,17 @@ def test_runtime_rejects_repeated_actions_without_infinite_loop(
         fixture_repository,
         repository_source,
         RepeatingModel(),
-        agent_max_iterations=4,
+        agent_max_iterations=5,
         agent_max_tool_calls=4,
         agent_max_identical_repeats=2,
+        agent_finalization_iterations=1,
     )
 
     result = runtime.run(state, context)
 
     assert result.state.status in {"budget_exhausted", "failed"}
     assert any("Repeated action rejected" in item.summary for item in result.state.observations)
-    assert result.state.iteration_count <= 4
+    assert result.state.iteration_count <= 5
 
 
 def test_finish_gate_rejects_unexplored_analysis(
@@ -260,7 +319,7 @@ def test_finish_gate_rejects_unexplored_analysis(
 
     assert result.state.status == "budget_exhausted"
     assert all(item.tool_name == "finish_gate" for item in result.state.observations)
-    assert "预算" in result.state.final_analysis.project_summary  # type: ignore[union-attr]
+    assert "未能提交" in result.state.final_analysis.project_summary  # type: ignore[union-attr]
 
 
 def test_runtime_recovers_from_unknown_tool_observation(
@@ -368,6 +427,139 @@ def test_runtime_stops_after_cumulative_token_budget(
     assert result.state.prompt_tokens == 80
     assert result.state.completion_tokens == 20
     assert result.trace.total_tokens == 100
+    assert result.state.stop_reason == "token_limit"
+    assert result.trace.stop_reason == "token_limit"
+
+
+def test_search_budget_counts_returned_results_instead_of_all_matches(
+    fixture_repository: Path,
+    repository_source: RepositorySource,
+) -> None:
+    runtime, state, context = runtime_fixture(
+        fixture_repository,
+        repository_source,
+        BroadSearchModel(),
+        agent_max_iterations=5,
+        agent_max_search_results_total=1,
+    )
+
+    result = runtime.run(state, context)
+    observation = result.state.observations[0]
+
+    assert observation.data["total_matches"] > observation.data["returned_count"]
+    assert observation.data["returned_count"] == 1
+    assert result.state.total_search_results == 1
+    assert result.state.stop_reason == "search_result_limit"
+
+
+def test_semantic_navigation_fingerprint_rejects_result_limit_variants(
+    fixture_repository: Path,
+    repository_source: RepositorySource,
+) -> None:
+    runtime, state, context = runtime_fixture(
+        fixture_repository,
+        repository_source,
+        TreeParameterVariantModel(),
+        agent_max_iterations=2,
+    )
+
+    result = runtime.run(state, context)
+
+    assert result.state.observations[0].status == "success"
+    assert result.state.observations[1].status == "error"
+    assert "navigation scope already produced" in result.state.observations[1].summary
+    assert result.state.tool_call_count == 1
+    assert len(result.state.completed_navigation_actions) == 1
+
+
+def test_registry_normalizes_omitted_tool_defaults() -> None:
+    registry = build_default_registry(Settings(memory_enabled=False))
+
+    omitted = registry.normalize_arguments("get_tree", {"path": "."})
+    explicit = registry.normalize_arguments(
+        "get_tree",
+        {
+            "path": ".",
+            "max_depth": 4,
+            "max_entries": 500,
+            "include_files": True,
+        },
+    )
+
+    assert omitted == explicit
+
+
+def test_failed_run_retains_successful_source_observations_in_partial_analysis(
+    fixture_repository: Path,
+    repository_source: RepositorySource,
+) -> None:
+    runtime, state, context = runtime_fixture(
+        fixture_repository,
+        repository_source,
+        ReadThenFailModel(),
+        agent_max_iterations=6,
+        agent_max_consecutive_errors=3,
+    )
+
+    result = runtime.run(state, context)
+    analysis = result.state.final_analysis
+
+    assert result.state.status == "failed"
+    assert result.state.stop_reason == "consecutive_error_limit"
+    assert analysis is not None
+    assert "consecutive_error_limit" in analysis.project_summary
+    assert analysis.directory_overview == ["已检查源码或证据路径：src/sample_service/main.py"]
+    assert analysis.recommended_reading_order == ["src/sample_service/main.py"]
+    assert len(analysis.evidence) == 1
+    assert analysis.evidence[0].verified is True
+    assert analysis.evidence[0].path == "src/sample_service/main.py"
+
+
+def test_runtime_reserves_final_iterations_and_rejects_more_tool_calls(
+    fixture_repository: Path,
+    repository_source: RepositorySource,
+) -> None:
+    runtime, state, context = runtime_fixture(
+        fixture_repository,
+        repository_source,
+        IgnoresFinalizationModel(),
+        agent_max_iterations=3,
+        agent_finalization_iterations=1,
+        agent_max_identical_repeats=3,
+    )
+
+    result = runtime.run(state, context)
+
+    assert result.state.observations[0].status == "success"
+    assert result.state.observations[-1].status == "error"
+    assert result.state.observations[-1].data["finalization_required"] is True
+    assert "Submit FinishAction" in result.state.observations[-1].summary
+    assert result.state.tool_call_count == 1
+
+
+def test_context_promotes_finalization_notice_when_evidence_exists() -> None:
+    settings = Settings(agent_max_iterations=5, agent_finalization_iterations=2)
+    state = AgentState(
+        goal="finish",
+        repository_url="https://github.com/example/project",
+        commit_sha="abc123",
+        bootstrap_summary="fixture",
+        iteration_count=3,
+        observations=[
+            Observation(
+                step_id="step_read",
+                tool_name="read_file",
+                status="success",
+                summary="Read main.py",
+                evidence_locations=[EvidenceLocation(path="main.py", start_line=1, end_line=3)],
+            )
+        ],
+    )
+
+    context = AgentContextBuilder(settings).build(state, [])
+
+    assert "# FINALIZATION MODE" in context
+    assert "Do not request another tool" in context
 
 
 def test_agent_prompt_treats_repository_content_as_untrusted() -> None:

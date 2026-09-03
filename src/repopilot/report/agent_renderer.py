@@ -97,6 +97,7 @@ class AgentMarkdownReportRenderer:
             f"- Total tokens: {state.total_tokens}"
             f"{' (estimated)' if state.token_usage_estimated else ''}",
             f"- Status: `{state.status}`",
+            f"- Stop reason: `{state.stop_reason or 'not set'}`",
             f"- Trace: `{trace_path or 'not exported'}`",
             "",
         ]

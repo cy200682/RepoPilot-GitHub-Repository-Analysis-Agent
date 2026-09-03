@@ -10,6 +10,22 @@ from pydantic import BaseModel, Field
 
 from repopilot.agent.actions import AgentAnalysisResult, AgentDecision
 
+StopReason = Literal[
+    "completed",
+    "iteration_limit",
+    "tool_call_limit",
+    "consecutive_error_limit",
+    "unique_file_limit",
+    "read_char_limit",
+    "search_result_limit",
+    "token_limit",
+    "ast_file_limit",
+    "ast_node_limit",
+    "repository_map_node_limit",
+    "repository_map_edge_limit",
+    "unknown_limit",
+]
+
 
 def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:12]}"
@@ -51,6 +67,7 @@ class AgentTrace(BaseModel):
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     ended_at: datetime | None = None
     final_status: str | None = None
+    stop_reason: StopReason | None = None
     llm_request_count: int = Field(default=0, ge=0)
     prompt_tokens: int = Field(default=0, ge=0)
     completion_tokens: int = Field(default=0, ge=0)
@@ -71,6 +88,7 @@ class AgentState(BaseModel):
     commit_sha: str
     bootstrap_summary: str
     status: Literal["running", "completed", "budget_exhausted", "failed"] = "running"
+    stop_reason: StopReason | None = None
     iteration_count: int = 0
     tool_call_count: int = 0
     consecutive_error_count: int = 0
@@ -103,4 +121,6 @@ class AgentState(BaseModel):
     token_usage_estimated: bool = False
     observations: list[Observation] = Field(default_factory=list)
     action_counts: dict[str, int] = Field(default_factory=dict)
+    semantic_action_counts: dict[str, int] = Field(default_factory=dict)
+    completed_navigation_actions: set[str] = Field(default_factory=set)
     final_analysis: AgentAnalysisResult | None = None

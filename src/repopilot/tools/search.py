@@ -102,7 +102,12 @@ class SearchCodeTool:
             tool_name=self.name,
             status="success",
             summary=f"Found {total_matches} matches for {args.query!r}; returned {len(matches)}.",
-            data={"query": args.query, "matches": matches, "total_matches": total_matches},
+            data={
+                "query": args.query,
+                "matches": matches,
+                "total_matches": total_matches,
+                "returned_count": len(matches),
+            },
             evidence_locations=evidence,
             truncated=truncated,
             truncation_notes=[f"Search results limited to {limit} matches."] if truncated else [],

@@ -33,6 +33,7 @@ class AgentContextBuilder:
         recent_count = self.settings.agent_recent_observations
         older = state.observations[:-recent_count]
         recent = state.observations[-recent_count:]
+        finalization = self._finalization_notice(state)
         sections = [
             f"# Goal\n{state.goal}",
             (
@@ -43,6 +44,7 @@ class AgentContextBuilder:
                 f"{self.settings.ast_max_files_per_run}"
                 f"\ntokens: {state.total_tokens}/{self.settings.agent_max_total_tokens}"
             ),
+            finalization,
             f"# Available tools\n{self._json([tool.model_dump() for tool in tools])}",
             (
                 "# Finish requirements\n"
@@ -68,6 +70,11 @@ class AgentContextBuilder:
             f"# Visited files\n{self._json(sorted(state.visited_files))}",
             f"# Search history\n{self._json(state.searched_queries[-20:])}",
             (
+                "# Completed navigation actions\n"
+                f"{self._json(sorted(state.completed_navigation_actions))}\n"
+                "Do not repeat a completed navigation scope; choose a different tool or scope."
+            ),
+            (
                 "# Repository memory catalog\n"
                 f"{self._json(state.memory_catalog) if state.memory_catalog else '(none)'}\n"
                 "This catalog only announces available historical memory. Use a memory tool "
@@ -88,6 +95,20 @@ class AgentContextBuilder:
             f"# Older observation summaries\n{self._older_summaries(older)}",
         ]
         return self._fit("\n\n".join(sections))
+
+    def _finalization_notice(self, state: AgentState) -> str:
+        remaining = self.settings.agent_max_iterations - state.iteration_count
+        has_evidence = any(
+            item.status == "success" and item.evidence_locations for item in state.observations
+        )
+        if remaining > self.settings.agent_finalization_iterations or not has_evidence:
+            return "# Finalization mode\nInactive."
+        return (
+            "# FINALIZATION MODE\n"
+            f"Only {remaining} decision iterations remain and verified source locations exist. "
+            "Submit a FinishAction now using existing Observation IDs and exact spans. "
+            "Do not request another tool. State limitations instead of broadening exploration."
+        )
 
     @staticmethod
     def _older_summaries(observations: list[Observation]) -> str:

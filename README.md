@@ -57,7 +57,7 @@ RepoPilot 当前已完成前三个工程阶段，足以作为可运行的 Reposi
 | Phase 1 | Clone、目录扫描、技术栈识别、README/配置解析、基础报告 | 已完成 |
 | Phase 2 | Agent Loop、Tool Registry、自主 Read/Search/Symbol 探索、Finding/Evidence | 已完成 |
 | Phase 3 | Python AST、受限 Resolver、增量 Repository Map、AST Evidence Gate | 工程实现完成 |
-| Phase 4 | SQLite/FTS5 Repository Memory、Context、CLI 多轮问答 | 工程实现完成，自动化验收通过 |
+| Phase 4 | SQLite/FTS5 Repository Memory、Context、CLI 多轮问答 | 工程实现完成，单仓真实 Provider 验收通过 |
 
 Phase 3 当前 Definition of Done 为 **30/34**。83 项自动化测试通过，覆盖率 **90.04%**；
 尚未完成三类真实仓库 Smoke Test、人工 Golden Evaluation 和至少一次以 `completed` 结束的
@@ -66,8 +66,8 @@ Phase 3 当前 Definition of Done 为 **30/34**。83 项自动化测试通过，
 详细记录见 [Phase 3 验收记录](./PHASE3_ACCEPTANCE.md)。
 
 Phase 4 当前 Definition of Done 为 **40/44**。未完成项是量化检索指标、重复问题成本下降对照、
-三类真实仓库 Smoke Test 和真实 Provider 多轮会话。为控制模型费用，本轮只运行 Fake Agent
-端到端验收，没有发起付费模型请求。详见 [Phase 4 验收记录](./PHASE4_ACCEPTANCE.md)。
+三类真实仓库 Smoke Test 和真实 Provider 多轮会话。Phase 4.1 已完成一次真实 MiniMax 单仓
+`completed` 回归，但不能替代上述多仓和多轮验收。详见 [Phase 4 验收记录](./PHASE4_ACCEPTANCE.md)。
 
 ## 环境要求
 
@@ -249,8 +249,8 @@ python -m pytest --cov=repopilot --cov-report=term --cov-fail-under=85
 当前基线：
 
 ```text
-103 passed
-88.36% coverage
+113 passed
+88.81% coverage
 ruff passed
 mypy passed
 clean editable install passed
