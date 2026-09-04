@@ -61,10 +61,16 @@ class AgentRuntime:
         while self._can_continue(state):
             state.iteration_count += 1
             step_id = new_id("step")
-            context = self.context_builder.build(state, definitions)
+            # Once verified evidence exists and the reserved closing window starts,
+            # remove tool affordances from the model context. The Agent still decides
+            # and the Evidence Gate still validates its answer, but providers that
+            # strongly prefer tool use no longer see contradictory tool choices while
+            # the runtime is requiring a FinishAction.
+            active_definitions = [] if self._must_finalize(state) else definitions
+            context = self.context_builder.build(state, active_definitions)
             try:
                 # 模型在调用工具和提交最终答案之间自主决策。
-                decision = self.model.decide(context, definitions)
+                decision = self.model.decide(context, active_definitions)
             except Exception as exc:
                 # 决策错误写入 Observation，并受连续错误预算约束。
                 self._sync_model_usage(state)

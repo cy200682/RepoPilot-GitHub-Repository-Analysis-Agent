@@ -29,8 +29,8 @@ class RecallThenFinishModel:
 
     def decide(self, context: str, tools: list[ToolDefinition]) -> AgentDecision:
         self.calls += 1
-        assert "recall_memory" in {item.name for item in tools}
         if self.calls == 1:
+            assert "recall_memory" in {item.name for item in tools}
             assert '"current_revision_memories": 1' in context
             assert "create_app 在 main.py 中创建应用" not in context
             return AgentDecision(
@@ -40,6 +40,7 @@ class RecallThenFinishModel:
                     arguments={"memory_types": ["entry_point"]},
                 ),
             )
+        assert tools == []
         observation_id = re.findall(r'"id": "(obs_[a-f0-9]+)"', context)[-1]
         return AgentDecision(
             rationale="当前 Commit 的已验证记忆足以回答入口问题。",

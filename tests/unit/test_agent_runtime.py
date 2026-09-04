@@ -222,8 +222,12 @@ class ReadThenFailModel:
 
 
 class IgnoresFinalizationModel:
+    def __init__(self) -> None:
+        self.available_tool_counts: list[int] = []
+
     def decide(self, context: str, tools: list[ToolDefinition]) -> AgentDecision:
-        del context, tools
+        del context
+        self.available_tool_counts.append(len(tools))
         return AgentDecision(
             rationale="Keep reading even when finalization is required.",
             action=ToolAction(
@@ -519,10 +523,11 @@ def test_runtime_reserves_final_iterations_and_rejects_more_tool_calls(
     fixture_repository: Path,
     repository_source: RepositorySource,
 ) -> None:
+    model = IgnoresFinalizationModel()
     runtime, state, context = runtime_fixture(
         fixture_repository,
         repository_source,
-        IgnoresFinalizationModel(),
+        model,
         agent_max_iterations=3,
         agent_finalization_iterations=1,
         agent_max_identical_repeats=3,
@@ -535,6 +540,8 @@ def test_runtime_reserves_final_iterations_and_rejects_more_tool_calls(
     assert result.state.observations[-1].data["finalization_required"] is True
     assert "Submit FinishAction" in result.state.observations[-1].summary
     assert result.state.tool_call_count == 1
+    assert model.available_tool_counts[0] > 0
+    assert model.available_tool_counts[1:] == [0, 0]
 
 
 def test_context_promotes_finalization_notice_when_evidence_exists() -> None:
